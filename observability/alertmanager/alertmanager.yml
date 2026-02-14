@@ -1,0 +1,12 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: relayforge-default
+  group_by: ["alertname", "severity", "slo"]
+  group_wait: 15s
+  group_interval: 1m
+  repeat_interval: 2h
+
+receivers:
+  - name: relayforge-default

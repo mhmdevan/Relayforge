@@ -1,0 +1,96 @@
+# -----------------------------
+# Rust / Cargo
+# -----------------------------
+/target/
+**/target/
+**/*.rs.bk
+Cargo.lock
+# NOTE: If this is a binary/app repo, keeping Cargo.lock ignored is okay.
+# NOTE: If you publish a library crate, you should commit Cargo.lock.
+
+# -----------------------------
+# Environment / Secrets
+# -----------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+**/secrets/
+config/local*.toml
+config/*.local.toml
+
+# -----------------------------
+# Logs / Dumps / Runtime data
+# -----------------------------
+*.log
+logs/
+**/logs/
+tmp/
+**/tmp/
+data/
+**/data/
+artifacts/perf/
+**/artifacts/perf/
+*.pid
+*.seed
+*.dump
+*.sql
+*.sqlite
+*.db
+
+# -----------------------------
+# Docker / Compose local state
+# -----------------------------
+docker-compose.override.yml
+compose.override.yml
+**/.docker/
+**/.compose/
+
+# -----------------------------
+# Observability local artifacts
+# -----------------------------
+prometheus-data/
+grafana-data/
+otel-data/
+**/prometheus-data/
+**/grafana-data/
+**/otel-data/
+
+# -----------------------------
+# SQLx offline data (only if you use sqlx offline mode)
+# -----------------------------
+.sqlx/
+**/.sqlx/
+
+# -----------------------------
+# Editor / IDE
+# -----------------------------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -----------------------------
+# Test / Coverage artifacts
+# -----------------------------
+coverage/
+**/coverage/
+*.profraw
+*.profdata
+*.lcov
+tarpaulin-report.html
+
+# -----------------------------
+# Misc
+# -----------------------------
+*.bak
+*.tmp
+a.txt

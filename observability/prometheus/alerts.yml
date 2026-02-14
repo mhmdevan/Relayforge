@@ -1,0 +1,83 @@
+groups:
+  - name: relayforge-slo-recording
+    interval: 30s
+    rules:
+      - record: relayforge:webhook_requests:rate5m
+        expr: sum(rate(http_requests_total{route="/webhooks/:source",method="POST"}[5m]))
+      - record: relayforge:webhook_errors_5xx:rate5m
+        expr: sum(rate(http_requests_total{route="/webhooks/:source",method="POST",status=~"5.."}[5m]))
+      - record: relayforge:webhook_error_ratio:5m
+        expr: relayforge:webhook_errors_5xx:rate5m / clamp_min(relayforge:webhook_requests:rate5m, 1)
+      - record: relayforge:webhook_latency_p95_seconds:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route="/webhooks/:source",method="POST"}[5m])))
+      - record: relayforge:worker_success_ratio:15m
+        expr: sum(rate(jobs_processed_total{status="succeeded"}[15m])) / clamp_min(sum(rate(jobs_processed_total[15m])), 1)
+
+  - name: relayforge-alerts
+    interval: 30s
+    rules:
+      - alert: RelayforgeWebhookAvailabilitySLOBreached
+        expr: relayforge:webhook_requests:rate5m > 1 and relayforge:webhook_error_ratio:5m > 0.01
+        for: 10m
+        labels:
+          severity: critical
+          slo: ingest-availability
+        annotations:
+          summary: "Webhook ingest error ratio is above 1% for 10m"
+          description: "5xx ratio on /webhooks/:source exceeded SLO threshold."
+          runbook: "observability/runbook.md#relayforgewebhookavailabilityslobreached"
+
+      - alert: RelayforgeWebhookLatencyP95High
+        expr: relayforge:webhook_requests:rate5m > 1 and relayforge:webhook_latency_p95_seconds:5m > 2
+        for: 15m
+        labels:
+          severity: warning
+          slo: ingest-latency
+        annotations:
+          summary: "Webhook ingest p95 latency above 2s for 15m"
+          description: "p95 for /webhooks/:source crossed the latency objective."
+          runbook: "observability/runbook.md#relayforgewebhooklatencyp95high"
+
+      - alert: RelayforgeOutboxBacklogHigh
+        expr: outbox_pending_count > 1000
+        for: 15m
+        labels:
+          severity: warning
+          slo: delivery-freshness
+        annotations:
+          summary: "Outbox backlog stayed above 1000 for 15m"
+          description: "Publisher throughput is lower than ingest throughput."
+          runbook: "observability/runbook.md#relayforgeoutboxbackloghigh"
+
+      - alert: RelayforgeDLQSpike
+        expr: increase(dlq_messages_total[10m]) > 5
+        for: 0m
+        labels:
+          severity: critical
+          slo: job-success
+        annotations:
+          summary: "Dead-letter events spiked in the last 10 minutes"
+          description: "Multiple jobs/messages moved to DLQ; investigate payload or consumer failures."
+          runbook: "observability/runbook.md#relayforgedlqspike"
+
+      - alert: RelayforgeWorkerRetryStorm
+        expr: increase(job_retries_total[10m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+          slo: job-success
+        annotations:
+          summary: "Retry volume is abnormally high"
+          description: "Transient failures are escalating and may lead to DLQ growth."
+          runbook: "observability/runbook.md#relayforgeworkerretrystorm"
+
+      - alert: RelayforgeWorkerSuccessRatioLow
+        expr: sum(rate(jobs_processed_total[15m])) > 0.2 and relayforge:worker_success_ratio:15m < 0.95
+        for: 15m
+        labels:
+          severity: critical
+          slo: job-success
+        annotations:
+          summary: "Worker success ratio dropped below 95%"
+          description: "Job processing quality is below objective over a 15m window."
+          runbook: "observability/runbook.md#relayforgeworkersuccessratiolow"
