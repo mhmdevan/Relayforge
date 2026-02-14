@@ -45,18 +45,22 @@ impl JobStatus {
             JobStatus::DeadLettered => "dead_lettered",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for JobStatus {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "received" => Some(JobStatus::Received),
-            "validated" => Some(JobStatus::Validated),
-            "deduped" => Some(JobStatus::Deduped),
-            "queued" => Some(JobStatus::Queued),
-            "processing" => Some(JobStatus::Processing),
-            "succeeded" => Some(JobStatus::Succeeded),
-            "failed" => Some(JobStatus::Failed),
-            "dead_lettered" => Some(JobStatus::DeadLettered),
-            _ => None,
+            "received" => Ok(JobStatus::Received),
+            "validated" => Ok(JobStatus::Validated),
+            "deduped" => Ok(JobStatus::Deduped),
+            "queued" => Ok(JobStatus::Queued),
+            "processing" => Ok(JobStatus::Processing),
+            "succeeded" => Ok(JobStatus::Succeeded),
+            "failed" => Ok(JobStatus::Failed),
+            "dead_lettered" => Ok(JobStatus::DeadLettered),
+            _ => Err("unknown job status"),
         }
     }
 }

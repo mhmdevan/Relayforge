@@ -20,15 +20,6 @@ pub enum AdminRole {
 }
 
 impl AdminRole {
-    pub fn from_str(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "viewer" => Some(Self::Viewer),
-            "operator" => Some(Self::Operator),
-            "admin" => Some(Self::Admin),
-            _ => None,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Viewer => "viewer",
@@ -46,6 +37,19 @@ impl AdminRole {
             Self::Viewer => 1,
             Self::Operator => 2,
             Self::Admin => 3,
+        }
+    }
+}
+
+impl std::str::FromStr for AdminRole {
+    type Err = &'static str;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "viewer" => Ok(Self::Viewer),
+            "operator" => Ok(Self::Operator),
+            "admin" => Ok(Self::Admin),
+            _ => Err("invalid admin role"),
         }
     }
 }
@@ -84,8 +88,10 @@ impl AdminAccessControl {
                 anyhow::bail!("admin fallback key must not be empty");
             }
 
-            let role = AdminRole::from_str(&entry.role)
-                .ok_or_else(|| anyhow::anyhow!("invalid admin role: {}", entry.role))?;
+            let role: AdminRole = entry
+                .role
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid admin role: {}", entry.role))?;
 
             fallback_by_hash.insert(sha256_hex(entry.key.as_bytes()), role);
         }
@@ -164,13 +170,13 @@ pub async fn require_operator_or_admin(
                 }
             };
 
-        let role = match AdminRole::from_str(&db_key.role) {
-            Some(v) => v,
-            None => {
+        let role: AdminRole = match db_key.role.parse() {
+            Ok(v) => v,
+            Err(_) => {
                 return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("invalid role in admin_api_keys: {}", db_key.role),
-                )
+                );
             }
         };
 

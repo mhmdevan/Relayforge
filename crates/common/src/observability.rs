@@ -44,23 +44,21 @@ pub fn init_tracing(service_name: &str, log: &LogSettings) -> anyhow::Result<()>
                 .with(otel_layer)
                 .init();
         }
+    } else if log.json {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_current_span(true)
+                    .with_span_list(true),
+            )
+            .init();
     } else {
-        if log.json {
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_current_span(true)
-                        .with_span_list(true),
-                )
-                .init();
-        } else {
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(fmt::layer().with_target(true))
-                .init();
-        }
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt::layer().with_target(true))
+            .init();
     }
 
     Ok(())

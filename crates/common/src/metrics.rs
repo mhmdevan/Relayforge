@@ -140,7 +140,7 @@ pub fn inc_dlq_messages() {
 pub fn set_outbox_pending_count(count: i64) {
     ensure_registered();
     let clamped = count.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
-    OUTBOX_PENDING_COUNT.set(clamped as i64);
+    OUTBOX_PENDING_COUNT.set(clamped);
 }
 
 pub fn render_metrics() -> anyhow::Result<String> {

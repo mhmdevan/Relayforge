@@ -198,6 +198,16 @@ fn extract_trace_context(payload: &Value) -> HashMap<String, String> {
     carrier
 }
 
+struct FailureContext<'a> {
+    pool: &'a Pool,
+    rabbit: &'a mq::Rabbit,
+    job_id: Uuid,
+    correlation_id: &'a str,
+    trace_context: &'a HashMap<String, String>,
+    max_attempts: i32,
+    processing_started_at: std::time::Instant,
+}
+
 /// Publish one outbox batch and return processed count.
 pub async fn publish_outbox_once(
     pool: &Pool,
@@ -392,6 +402,16 @@ pub async fn process_job_message(
 
     let processing_started_at = std::time::Instant::now();
 
+    let failure_ctx = FailureContext {
+        pool,
+        rabbit,
+        job_id,
+        correlation_id: &correlation_id,
+        trace_context: &trace_context,
+        max_attempts,
+        processing_started_at,
+    };
+
     let input = match infra::jobs::get_job_processing_input(pool, job_id)
         .await
         .context("load processing payload from db failed")?
@@ -412,18 +432,7 @@ pub async fn process_job_message(
         Ok(v) => v,
         Err(err) => {
             let e = anyhow::anyhow!("invalid inbox raw_body json: {err}");
-            return handle_failure(
-                pool,
-                rabbit,
-                job_id,
-                &correlation_id,
-                &trace_context,
-                e,
-                max_attempts,
-                FailureMode::Permanent,
-                processing_started_at,
-            )
-            .await;
+            return handle_failure(&failure_ctx, e, FailureMode::Permanent).await;
         }
     };
 
@@ -478,33 +487,11 @@ pub async fn process_job_message(
             } else {
                 FailureMode::Transient
             };
-            handle_failure(
-                pool,
-                rabbit,
-                job_id,
-                &correlation_id,
-                &trace_context,
-                e,
-                max_attempts,
-                mode,
-                processing_started_at,
-            )
-            .await
+            handle_failure(&failure_ctx, e, mode).await
         }
         Err(_) => {
             let e = anyhow::anyhow!("processing timeout");
-            handle_failure(
-                pool,
-                rabbit,
-                job_id,
-                &correlation_id,
-                &trace_context,
-                e,
-                max_attempts,
-                FailureMode::Transient,
-                processing_started_at,
-            )
-            .await
+            handle_failure(&failure_ctx, e, FailureMode::Transient).await
         }
     }
 }
@@ -533,28 +520,22 @@ pub async fn consumer_loop(
 }
 
 async fn handle_failure(
-    pool: &Pool,
-    rabbit: &mq::Rabbit,
-    job_id: Uuid,
-    correlation_id: &str,
-    trace_context: &HashMap<String, String>,
+    ctx: &FailureContext<'_>,
     err: anyhow::Error,
-    max_attempts: i32,
     mode: FailureMode,
-    processing_started_at: std::time::Instant,
 ) -> anyhow::Result<ConsumeAction> {
     let attempts: i32 = sqlx::query_scalar("SELECT attempts FROM jobs WHERE id = $1")
-        .bind(job_id)
-        .fetch_one(pool)
+        .bind(ctx.job_id)
+        .fetch_one(ctx.pool)
         .await
         .context("read attempts failed")?;
 
     let err_str = err.to_string();
-    let should_dead_letter = matches!(mode, FailureMode::Permanent) || attempts >= max_attempts;
+    let should_dead_letter = matches!(mode, FailureMode::Permanent) || attempts >= ctx.max_attempts;
 
     if should_dead_letter {
-        let mut tx = pool.begin().await.context("begin tx failed")?;
-        infra::jobs::mark_dead_lettered(&mut *tx, job_id, &err_str)
+        let mut tx = ctx.pool.begin().await.context("begin tx failed")?;
+        infra::jobs::mark_dead_lettered(&mut *tx, ctx.job_id, &err_str)
             .await
             .context("mark_dead_lettered failed")?;
         tx.commit().await.context("commit failed")?;
@@ -562,41 +543,47 @@ async fn handle_failure(
         common::metrics::inc_jobs_processed("dead_lettered");
         common::metrics::observe_job_processing_duration(
             "dead_lettered",
-            processing_started_at.elapsed(),
+            ctx.processing_started_at.elapsed(),
         );
         common::metrics::inc_dlq_messages();
 
-        warn!(correlation_id = %correlation_id, %job_id, attempts, %err_str, "job dead-lettered");
+        warn!(
+            correlation_id = %ctx.correlation_id,
+            job_id = %ctx.job_id,
+            attempts,
+            %err_str,
+            "job dead-lettered"
+        );
         return Ok(ConsumeAction::DeadLetter);
     }
 
-    let mut retry_trace_context = trace_context.clone();
+    let mut retry_trace_context = ctx.trace_context.clone();
     common::observability::inject_current_context(&mut retry_trace_context);
 
     let retry_payload = json!({
-        "job_id": job_id.to_string(),
-        "correlation_id": correlation_id,
+        "job_id": ctx.job_id.to_string(),
+        "correlation_id": ctx.correlation_id,
         "trace_context": retry_trace_context
     });
     let bytes = serde_json::to_vec(&retry_payload).context("serialize retry payload failed")?;
-    rabbit
+    ctx.rabbit
         .publish("job.retry", &bytes)
         .await
         .context("publish retry failed")?;
 
-    let mut tx = pool.begin().await.context("begin tx failed")?;
-    infra::jobs::mark_failed_and_requeue(&mut *tx, job_id, &err_str)
+    let mut tx = ctx.pool.begin().await.context("begin tx failed")?;
+    infra::jobs::mark_failed_and_requeue(&mut *tx, ctx.job_id, &err_str)
         .await
         .context("mark_failed_and_requeue failed")?;
     tx.commit().await.context("commit failed")?;
 
     common::metrics::inc_job_retries();
     common::metrics::inc_jobs_processed("retry");
-    common::metrics::observe_job_processing_duration("retry", processing_started_at.elapsed());
+    common::metrics::observe_job_processing_duration("retry", ctx.processing_started_at.elapsed());
 
     warn!(
-        correlation_id = %correlation_id,
-        %job_id,
+        correlation_id = %ctx.correlation_id,
+        job_id = %ctx.job_id,
         attempts,
         %err_str,
         "job failed -> retry scheduled"
