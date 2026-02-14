@@ -41,6 +41,8 @@ artifacts/perf/
 *.sql
 *.sqlite
 *.db
+!migrations/
+!migrations/*.sql
 
 # -----------------------------
 # Docker / Compose local state
